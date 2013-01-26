@@ -1,0 +1,141 @@
+#!/bin/bash
+
+################################CONFIG_OPTIONS##################################
+
+debug=1  #check where in the set of tests its failing
+delete=1 #deletes files from ramdisk after the program is closed
+extract_location=$(mount | grep shm | sed 's/^.*\ on\ //' | sed 's/\ .*//')
+exec_name="i_view32.exe"
+exec_path=""$HOME"/user_bin/irfanview/i_view32.exe"
+
+################################################################################
+
+function d_echo(){
+  if [[ $debug -eq 1 ]]; then
+        echo "debug message: $@"
+  fi
+}
+
+function error(){
+    name=$( echo $0 | sed 's/^.*\///' )
+    echo "ERROR: $@"
+    have_zenity=1
+    command -v "zenity" >/dev/null 2>&1 || { >&2 have_zenity=0; }
+    if [[ have_zenity ]]; then zenity --error --title "$name Fatal Error" --text "ERROR: $@"; fi
+    if [[ "$0" == "$SHELL" ]]; then return 1; else exit 1; fi
+}
+
+function check_deps(){
+    requires+='df '
+    requires+='file '
+    requires+='find '
+    requires+='grep '
+    requires+='pgrep '
+    requires+='rm '
+    requires+='rmdir '
+    requires+='sed '
+    requires+='sort '
+    requires+='unzip '
+    requires+='wine '
+    requires+='winepath '
+    requires+='zenity '
+    requires+='zipinfo '
+    requires+='awk '
+
+    for cmd in $requires; do
+            d_echo "checking PATH for: $cmd"
+            command -v "$cmd" >/dev/null 2>&1 || { >&2 not_found+="$cmd "; }
+    done
+
+    if [[ -n "$not_found" ]]; then
+        if [[ -z $(echo "$not_found" | grep zenity) ]]; then
+            error "The following dependencies could not be found: $not_found"
+        else
+            echo "ERROR: The following dependencies could not be found: $not_found"
+            if [[ "$0" == "$SHELL" ]]; then return 0; else exit 0; fi
+        fi
+    fi
+
+    d_echo "Passed Dependency Tests"
+}
+
+function check_exists(){
+    if [[ ! -e "$1" ]]; then
+        error "file \"$1\" doesn't exist!"
+    fi
+}
+
+function check_type(){
+    check=$(file --brief --mime "$1" | sed 's/;.*//')
+    if [[ $check = "application/zip" ]]; then
+        file_type="zip"
+        d_echo "file type test returned zip file"
+    else
+        file_type="unknown"
+        d_echo "file type test returned \"$check\""
+        d_echo "skipping archive handler"
+    fi
+}
+
+function check_location(){
+    if [[ -d "$extract_location" ]]; then
+        d_echo "Passed Extraction Directory Exists Test"
+    else
+        error "Failed Extraction Directory Exists Test"
+    fi
+}
+
+function check_free_space(){
+    mount_point=$( df -P "$1"  | tail -n 1 | awk '{ print $NF}' )
+    file_size=$(du -a --block-size=1024 "$1" | sed 's/[\ \t].*//') # compressed size
+    #file_size=$( zipinfo -t "$1" | sed 's/.*,\ //' | sed 's/\ .*//') # uncompressed size
+    disk_available=$(df -P "$mount_point" | tail -n 1 | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/\ .*$//g')
+    if [[ $disk_available -gt $file_size ]]; then
+        d_echo "Passed Free Space > Filesize Test"
+    else
+        error "Failed Free Space > Filesize Test"
+    fi
+}
+
+function make_tmp_dir(){
+    TMPDIR=$( mktemp -d "$extract_location"/irfanViewTemp.XXXXXXXXXX ) >/dev/null 2>&1 || { >&2 error "mktemp returned an error, aborting..."; }
+    tmpdir_location_escape=$(echo $TMPDIR | sed 's/\//\\\//g')
+    d_echo "made temporary directory at: $TMPDIR"
+}
+
+check_exists "$1"
+check_type "$1" # check if the file is a zip archive
+if [[ $file_type = "zip" ]]; then
+    check_deps
+    check_location "$1"
+    check_free_space "$1"
+    make_tmp_dir
+
+    if [[ $debug -eq 1 ]]; then
+        unzip -j -d "$TMPDIR" "$1" -x ".DS_Store"
+    else
+        unzip -j -d "$TMPDIR" "$1" -x ".DS_Store" > /dev/null 2>&1
+    fi
+
+    file_to_open=$( find "$TMPDIR" -type f | sort | head -n 1)
+    if [[ -z $file_to_open ]]; then error "Failed to get a valid file path for some reason. Aborting..."; fi
+    file_path=$(winepath -w "$file_to_open")
+
+    d_echo "$file_to_open"
+    d_echo "$file_path"
+else
+    file_path=$(winepath -w "$1")
+fi
+
+if [[ -z $file_path ]]; then error "Failed to get a valid wine path for some reason. Aborting..."; fi
+
+wine $exec_path $file_path &
+wait $( pgrep -P $$ $exec_name ) # wait for the child process to exit
+
+if [[ $file_type = "zip" ]]; then
+    if [[ $delete -eq 1 ]]; then
+        rm -rf "$TMPDIR"
+    fi
+fi
+
+if [[ "$0" == "$SHELL" ]]; then return 0; else exit 0; fi
