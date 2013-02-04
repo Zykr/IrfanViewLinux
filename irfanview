@@ -86,7 +86,7 @@ function check_location(){
 }
 
 function check_free_space(){
-    mount_point=$( df -P "$1"  | tail -n 1 | awk '{ print $NF}' )
+    mount_point=$( df -P "$extract_location"  | tail -n 1 | awk '{ print $NF}' )
     file_size=$(du -a --block-size=1024 "$1" | sed 's/[\ \t].*//') # compressed size
     #file_size=$( zipinfo -t "$1" | sed 's/.*,\ //' | sed 's/\ .*//') # uncompressed size
     disk_available=$(df -P "$mount_point" | tail -n 1 | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/[\/a-z0-9]*[\t\ ]*//' | sed 's/\ .*$//g')
